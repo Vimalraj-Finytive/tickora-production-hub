@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  tickora-hub:
+    build: .
+    container_name: tickora-monitoring
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    pid: "host"  
+    user: root   
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/log/journal:/var/log/journal:ro
+      - /run/log/journal:/run/log/journal:ro
+      - /etc/machine-id:/etc/machine-id:ro 
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+
+      # Uncomment if using Traefik as reverse proxy:
+      # - "traefik.http.routers.tickora-monitor.rule=Host(`monitor.tickora.internal`)"
+      # - "traefik.http.routers.tickora-monitor.entrypoints=websecure"
+
+      # If you run this alongside your main app stack, attach to the same network:
+      # networks:
+      #   default:
+      #     external: true
+      #     name: tickora_network
