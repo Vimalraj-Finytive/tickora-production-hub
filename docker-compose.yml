@@ -14,6 +14,8 @@ services:
       - /var/log/journal:/var/log/journal:ro
       - /run/log/journal:/run/log/journal:ro
       - /etc/machine-id:/etc/machine-id:ro 
+      - /var/log/postgresql:/var/log/postgresql:ro
+      - /var/log/redis:/var/log/redis:ro
     deploy:
       resources:
         limits:
