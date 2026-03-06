@@ -288,10 +288,12 @@ SSL_HOSTS = [
 
 # Systemd Units to monitor (instead of file paths)
 LOG_FILES = {
-    "Java":     "tickora.service",
-    "Python":   "tickora-python.service",
-    "Database": "/var/log/postgresql/postgresql-17-main.log",
-    "Redis":    "/var/log/redis/redis-server.log",
+    "Java":      "tickora.service",
+    "Python":    "tickora-python.service",
+    "Error Log": "/root/Tickora/tms-monorepo/logs/error.log",
+    "Debug Log": "/root/Tickora/tms-monorepo/logs/debug.log",
+    "Database":  "/var/log/postgresql/postgresql-17-main.log",
+    "Redis":     "/var/log/redis/redis-server.log",
 }
 
 API_ENDPOINTS = [
@@ -1262,7 +1264,7 @@ with lc4b:
 
 date_str = selected_date.strftime("%Y-%m-%d")
 time_str = selected_time.strftime("%H:%M:%S")
-log_tabs = st.tabs(["Java", "Python", "Database", "Redis"])
+log_tabs = st.tabs(list(LOG_FILES.keys()))
 
 def render_log(tab, service_unit, name, selected_day, selected_time, time_to, selected_endpoint, search_term, log_level, full_day, log_lines):
     with tab:
@@ -1280,7 +1282,6 @@ def render_log(tab, service_unit, name, selected_day, selected_time, time_to, se
             # Generate mock logs with the SELECTED DATE & LINE COUNT
             # Explicitly construct datetime to avoid any combine/type confusion
             import datetime as dt_mod
-            import random
             
             try:
                 mock_time = dt_mod.datetime(selected_day.year, selected_day.month, selected_day.day, selected_time.hour, selected_time.minute, selected_time.second)
@@ -1368,7 +1369,9 @@ def render_log(tab, service_unit, name, selected_day, selected_time, time_to, se
 
         try:
             if service_unit.startswith("/"):
-                cmd = ["sudo", "tail", "-n", "2000", service_unit]
+                # For file-based logs, use grep to filter by date first, then tail
+                date_prefix = selected_day.strftime("%Y-%m-%d")
+                cmd = ["sudo", "grep", "-a", date_prefix, service_unit]
             else:
                 cmd = [
                     "sudo", "journalctl", 
