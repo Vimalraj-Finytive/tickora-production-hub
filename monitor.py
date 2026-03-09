@@ -19,6 +19,7 @@ import json
 import redis
 import re
 import random
+import shlex
 from collections import deque
 
 # ─────────────────────────────────────────────
@@ -1164,26 +1165,53 @@ def live_section():
 
     st.markdown('<hr style="border-color:#21262D;margin:16px 0;">', unsafe_allow_html=True)
 
-    # ── TOP PROCESSES ────────────────────────────────
-    st.markdown('<p class="section-header">Top Processes by CPU</p>', unsafe_allow_html=True)
+    # ── TOP PROCESSES (Task Manager Style) ──────────────
+    st.markdown('<p class="section-header">Top Processes (Live)</p>', unsafe_allow_html=True)
     try:
         procs = []
-        for p in psutil.process_iter(["pid","name","cpu_percent","memory_percent","status"]):
+        for p in psutil.process_iter(["pid", "name", "cpu_percent", "memory_info", "memory_percent", "status", "username"]):
             try:
                 i = p.info
                 if i.get("cpu_percent") is None: continue
-                procs.append({"PID": i["pid"], "Name": i["name"],
-                               "CPU %": round(i["cpu_percent"] or 0, 1),
-                               "RAM %": round(i.get("memory_percent") or 0, 2),
-                               "Status": i["status"]})
+                mem_mb = (i.get("memory_info").rss if i.get("memory_info") else 0) / (1024 * 1024)
+                procs.append({
+                    "Name": i["name"] or "System",
+                    "PID": i["pid"],
+                    "CPU %": round(i["cpu_percent"] or 0, 1),
+                    "Memory (MB)": round(mem_mb, 1),
+                    "RAM %": round(i.get("memory_percent") or 0, 1),
+                    "Status": (i["status"] or "unknown").capitalize(),
+                    "User": (i.get("username") or "—").split("\\")[-1][:12],
+                })
             except: continue
         if procs:
+            df_p = pd.DataFrame(procs).sort_values("Memory (MB)", ascending=False).head(15).reset_index(drop=True)
+            
+            # Color the status column
+            def _proc_style(val):
+                if val == "Running": return "color:#3FB950;font-weight:bold;"
+                elif val == "Sleeping": return "color:#58A6FF;"
+                elif val == "Zombie": return "color:#F85149;font-weight:bold;"
+                return "color:#8B949E;"
+            
             st.dataframe(
-                pd.DataFrame(procs).sort_values("CPU %", ascending=False).head(10),
-                hide_index=True, use_container_width=True, height=300
+                df_p.style.map(_proc_style, subset=["Status"]).format({"CPU %": "{:.1f}%", "Memory (MB)": "{:.1f} MB", "RAM %": "{:.1f}%"}),
+                hide_index=True, use_container_width=True, height=min(420, 60 + len(df_p) * 36)
+            )
+            
+            # Summary stats
+            total_procs = len(procs)
+            running = sum(1 for p in procs if p["Status"] == "Running")
+            sleeping = sum(1 for p in procs if p["Status"] == "Sleeping")
+            st.markdown(
+                f'<div style="font-size:11px;color:#8B949E;margin-top:4px;">'
+                f'Total: <b>{total_procs}</b> processes &nbsp;|&nbsp; '
+                f'🟢 Running: <b>{running}</b> &nbsp;|&nbsp; '
+                f'🔵 Sleeping: <b>{sleeping}</b>'
+                f'</div>', unsafe_allow_html=True
             )
         else:
-            st.info("No process data.")
+            st.info("No process data available.")
     except Exception as e:
         st.warning(f"Process access error: {e}")
 
@@ -1281,12 +1309,10 @@ def render_log(tab, service_unit, name, selected_day, selected_time, time_to, se
             
             # Generate mock logs with the SELECTED DATE & LINE COUNT
             # Explicitly construct datetime to avoid any combine/type confusion
-            import datetime as dt_mod
-            
             try:
-                mock_time = dt_mod.datetime(selected_day.year, selected_day.month, selected_day.day, selected_time.hour, selected_time.minute, selected_time.second)
+                mock_time = datetime.datetime(selected_day.year, selected_day.month, selected_day.day, selected_time.hour, selected_time.minute, selected_time.second)
             except Exception:
-                mock_time = dt_mod.datetime.now()
+                mock_time = datetime.datetime.now()
 
             levels = ["INFO", "INFO", "INFO", "WARN", "ERROR"]
             if log_level != "ALL":
@@ -1307,7 +1333,7 @@ def render_log(tab, service_unit, name, selected_day, selected_time, time_to, se
             count = 100 if full_day else log_lines
             
             for i in range(count): 
-                curr_time = mock_time + dt_mod.timedelta(seconds=i*10)
+                curr_time = mock_time + datetime.timedelta(seconds=i*10)
                 if not full_day and time_to and curr_time.time() > time_to:
                     break
                     
@@ -1369,9 +1395,20 @@ def render_log(tab, service_unit, name, selected_day, selected_time, time_to, se
 
         try:
             if service_unit.startswith("/"):
-                # For file-based logs, use grep to filter by date first, then tail
+                # Use zgrep to search across ALL rotated/compressed log files (*.gz, *.1, etc.)
                 date_prefix = selected_day.strftime("%Y-%m-%d")
-                cmd = ["sudo", "grep", "-a", date_prefix, service_unit]
+                glob_path = service_unit + "*"  # e.g., /path/debug.log* matches debug.log, debug.log.1, debug.log.2.gz
+                
+                if search_term:
+                    # Sanitize user input to prevent shell injection
+                    safe_term = shlex.quote(search_term)
+                    safe_date = shlex.quote(date_prefix)
+                    shell_cmd = f'zgrep -ai {safe_term} {glob_path} 2>/dev/null | grep -a {safe_date}'
+                else:
+                    safe_date = shlex.quote(date_prefix)
+                    shell_cmd = f'zgrep -a {safe_date} {glob_path} 2>/dev/null'
+                
+                cmd = ["bash", "-c", shell_cmd]
             else:
                 cmd = [
                     "sudo", "journalctl", 
@@ -1382,20 +1419,21 @@ def render_log(tab, service_unit, name, selected_day, selected_time, time_to, se
                ]
                
             # Limit lines at journalctl level only if no filters applied and not full day
-            if not full_day and selected_endpoint == "Any" and not search_term and log_level == "ALL":
-                cmd.extend(["-n", str(log_lines)])
-            elif not full_day:
-                cmd.extend(["-n", "5000"]) # Fetch more to filter down
+            if not service_unit.startswith("/"):
+                if not full_day and selected_endpoint == "Any" and not search_term and log_level == "ALL":
+                    cmd.extend(["-n", str(log_lines)])
+                elif not full_day:
+                    cmd.extend(["-n", "5000"]) # Fetch more to filter down
             
             # Execute command
             result = subprocess.run(
                 cmd, 
                 capture_output=True, 
                 text=True, 
-                timeout=12 # Increased timeout for larger fetches
+                timeout=20 # zgrep on compressed files needs more time
             )
             
-            if result.returncode != 0 and "No entries" not in result.stderr:
+            if result.returncode != 0 and result.returncode != 1 and "No entries" not in result.stderr:
                 err_msg = result.stderr.strip() or f"Exit code {result.returncode}"
                 if "sudo: a password is required" in err_msg:
                      st.error(f"❌ Permission Denied: Need passwordless sudo for `journalctl`.\nCommand: `{' '.join(cmd)}`")
