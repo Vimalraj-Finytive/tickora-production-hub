@@ -16,18 +16,9 @@ services:
       - /etc/machine-id:/etc/machine-id:ro
       - /var/log/postgresql:/var/log/postgresql:ro
       - /var/log/redis:/var/log/redis:ro
-      - /root/Tickora/tms-monorepo/logs:/root/Tickora/tms-monorepo/logs:ro
+      - /home/finytive1/Tickora/tms-monorepo/logs:/home/finytive1/Tickora/tms-monorepo/logs:ro
     deploy:
       resources:
         limits:
           cpus: '0.50'
           memory: 512M
-      # Uncomment if using Traefik as reverse proxy:
-      # - "traefik.http.routers.tickora-monitor.rule=Host(`monitor.tickora.internal`)"
-      # - "traefik.http.routers.tickora-monitor.entrypoints=websecure"
-
-      # If you run this alongside your main app stack, attach to the same network:
-      # networks:
-      #   default:
-      #     external: true
-      #     name: tickora_network
